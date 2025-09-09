@@ -4,13 +4,13 @@ from pymongo.errors import PyMongoError
 import certifi
 from datetime import datetime
 from openai import OpenAI
-import json
 
-# Dummy credentials
+# Dummy user credentials
 USER_CREDENTIALS = {
     "admin": "admin123",
     "user": "user123"
 }
+
 
 def rerun():
     if hasattr(st, "rerun"):
@@ -21,8 +21,10 @@ def rerun():
         except Exception:
             st.warning("Please refresh the page.")
 
+
 def get_mongodb_client(uri):
-    return MongoClient(uri, tls=True, tlsCAFile=certifi.where())
+    return MongoClient(uri, tlsCAFile=certifi.where())
+
 
 def save_user_config(username, openai_key, mongo_uri):
     try:
@@ -35,6 +37,7 @@ def save_user_config(username, openai_key, mongo_uri):
     except PyMongoError as e:
         return False, str(e)
 
+
 def get_user_config(username, mongo_uri):
     try:
         client = get_mongodb_client(mongo_uri)
@@ -42,14 +45,16 @@ def get_user_config(username, mongo_uri):
         col = db['configs']
         config = col.find_one({"username": username}, {"_id": 0})
         client.close()
-        return config or {}
+        return config if config else {}
     except PyMongoError as e:
         return {"error": str(e)}
+
 
 def mask_key(key):
     if not key or len(key) < 8:
         return "****"
     return f"{key[:4]}****{key[-4:]}"
+
 
 def list_projects(username, mongo_uri):
     try:
@@ -60,8 +65,9 @@ def list_projects(username, mongo_uri):
         client.close()
         return projects
     except PyMongoError as e:
-        st.error(f"Database error: {e}")
+        st.error(f"DB error: {e}")
         return []
+
 
 def save_project(username, mongo_uri, title, ptype):
     try:
@@ -84,8 +90,9 @@ def save_project(username, mongo_uri, title, ptype):
         client.close()
         return res.inserted_id
     except PyMongoError as e:
-        st.error(f"Database error: {e}")
+        st.error(f"DB error: {e}")
         return None
+
 
 def call_llm(api_key, user_prompt, system_prompt=""):
     client = OpenAI(api_key=api_key)
@@ -100,30 +107,33 @@ def call_llm(api_key, user_prompt, system_prompt=""):
     )
     return response.choices[0].message.content
 
+
 def login():
     st.title("Login")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
     if st.button("Login"):
-        if username in USER_CREDENTIALS and password == USER_CREDENTIALS[username]:
+        if username in USER_CREDENTIALS and USER_CREDENTIALS[username] == password:
             st.session_state.logged_in = True
             st.session_state.username = username
             rerun()
         else:
             st.error("Invalid username or password")
 
+
 def logout():
     st.sidebar.markdown("---")
     if st.sidebar.button("Logout"):
-        keys_to_clear = ['logged_in', 'username', 'temp_mongo_uri', 'selected_project_id',
-                         'uploaded_files', 'user_prompt', 'system_prompt', 'llm_response', 'business_processes']
-        for k in keys_to_clear:
-            if k in st.session_state:
-                del st.session_state[k]
+        for key in ["logged_in", "username", "temp_mongo_uri", "selected_project_id",
+                    "uploaded_files", "user_prompt", "system_prompt", "llm_response", "business_processes"]:
+            if key in st.session_state:
+                del st.session_state[key]
         rerun()
 
-def project_card(proj, key):
-    return st.button(f"{proj['title']} ({proj['type']})", key=key)
+
+def project_card(project, key):
+    return st.button(f"{project['title']} ({project['type']})", key=key)
+
 
 def main_app():
     st.title(f"Welcome, {st.session_state.username}")
@@ -132,15 +142,16 @@ def main_app():
         mongo_uri = st.secrets["credentials"]["mongo_uri"]
         openai_api_key = st.secrets["credentials"]["openai_api_key"]
     except Exception:
-        st.error("Please set Mongo URI and OpenAI API key in Streamlit secrets.")
+        st.error("Configure your credentials in .streamlit/secrets.toml")
         return
 
     st.sidebar.write(f"Logged in as: {st.session_state.username}")
     st.sidebar.markdown("---")
-    st.sidebar.write("Credentials loaded securely.")
+    st.sidebar.write("API keys loaded securely.")
+
     st.sidebar.header("Create New Project")
     new_title = st.sidebar.text_input("Project Title")
-    new_type = st.sidebar.selectbox("Project Type", ["gpt", "web app", "testing", "mobile app"])
+    new_type = st.sidebar.selectbox("Project Type", ["web app", "gpt", "testing", "mobile app"])
     if st.sidebar.button("Create Project"):
         if new_title.strip():
             pid = save_project(st.session_state.username, mongo_uri, new_title.strip(), new_type)
@@ -149,115 +160,91 @@ def main_app():
                 st.session_state.selected_project_id = pid
                 rerun()
             else:
-                st.sidebar.error("Failed to create project.")
+                st.sidebar.error("Failed to create project")
         else:
-            st.sidebar.error("Please enter a project title.")
+            st.sidebar.warning("Project title required")
     st.sidebar.markdown("---")
     logout()
 
     projects = list_projects(st.session_state.username, mongo_uri)
-    if 'selected_project_id' not in st.session_state:
+    if "selected_project_id" not in st.session_state:
         st.session_state.selected_project_id = None
 
     cols = st.columns(3)
-    for idx, proj in enumerate(projects):
+    for idx, project in enumerate(projects):
         with cols[idx % 3]:
-            if st.button(proj['title'] + f" ({proj['type']})", key=str(proj["_id"])):
-                st.session_state.selected_project_id = proj["_id"]
+            if st.button(project['title'] + f" ({project['type']})", key=str(project["_id"])):
+                st.session_state.selected_project_id = project["_id"]
                 rerun()
 
     if st.session_state.selected_project_id:
         project = next((p for p in projects if p["_id"] == st.session_state.selected_project_id), None)
         if not project:
-            st.info("Selected project does not exist.")
+            st.info("Selected project not found.")
             return
-
         st.header(f"Project: {project['title']} ({project['type']})")
 
-        tabs = st.tabs([
-            "1 Upload & Prompts", 
-            "2 Run LLM", 
-            "3 View Response", 
-            "4 Edit Processes", 
-            "5 Manage Test Scenarios"
-        ])
+        tabs = st.tabs(["1 Upload & Prompts", "2 LLM Query", "3 View Response", "4 Edit Processes", "5 Test Cases"])
 
         with tabs[0]:
-            uploaded_files = st.file_uploader(
-                "Upload files", accept_multiple_files=True, 
-                type=["pdf", "docx", "txt"]
-            )
-            user_prompt = st.text_input(
-                "Additional User Prompt (Optional)", 
-                value=st.session_state.get("additional_prompt", "")
-            )
-            # Keep the fixed prompt stored too
-            st.markdown("**Note:** The system and main user prompts are fixed in the backend.")
+            uploaded_files = st.file_uploader("Upload files", accept_multiple_files=True, type=["pdf", "docx", "txt"])
+            user_prompt = st.text_area("User Prompt", value=st.session_state.get("user_prompt", ""))
+            system_prompt = st.text_area("System Prompt", value=st.session_state.get("system_prompt", ""))
             if st.button("Save Step 1"):
                 st.session_state.uploaded_files = uploaded_files
-                st.session_state.additional_prompt = user_prompt
-                st.success("Inputs saved.")
+                st.session_state.user_prompt = user_prompt
+                st.session_state.system_prompt = system_prompt
+                st.success("Saved inputs")
 
         with tabs[1]:
             if not st.session_state.get("uploaded_files"):
-                st.warning("Please upload files in Step 1.")
+                st.warning("Upload files first")
             elif not openai_api_key:
-                st.warning("OpenAI API key is missing.")
+                st.warning("OpenAI API key missing")
             else:
                 if st.button("Run LLM"):
                     combined_text = ""
                     for f in st.session_state.uploaded_files:
                         try:
                             combined_text += f.read().decode() + "\n"
-                        except Exception:
-                            combined_text += f"[Unable to read {f.name}]\n"
-
-                    # Fixed system and user prompt strings:
-                    fixed_system_prompt = "You are an expert business analyst in banking domain."
-                    fixed_user_prompt = (
-                        "Extract the content from the files and generate the business processes. "
-                        "Ensure to correctly extract all the business processes and respond in JSON format."
+                        except:
+                            combined_text += f"[Unreadable content from {f.name}]\n"
+                    prompt = (st.session_state.user_prompt or "") + "\n\nContents:\n" + combined_text
+                    # Request the LLM to respond only with JSON array
+                    formatted_prompt = (
+                        "You are an enterprise assistant. Extract business processes and return ONLY a JSON array "
+                        "of objects with 'title' and 'description'.\n"
+                        f"Prompt:\n{prompt}"
                     )
-
-                    # Combine fixed user prompt with additional prompt from user (if any)
-                    if st.session_state.get("additional_prompt"):
-                        combined_user_prompt = (
-                            fixed_user_prompt + "\nAdditional user input: " + st.session_state.additional_prompt + "\n\n"
-                            + "Documents Content:\n" + combined_text
-                        )
-                    else:
-                        combined_user_prompt = (
-                            fixed_user_prompt + "\n\nDocuments Content:\n" + combined_text
-                        )
-
                     try:
-                        response_text = call_llm(
-                            openai_api_key,
-                            combined_user_prompt,
-                            fixed_system_prompt
-                        )
-                        parsed = json.loads(response_text)  # expect JSON from model
+                        response_text = call_llm(openai_api_key, formatted_prompt, st.session_state.system_prompt or "")
+                        import json
+                        try:
+                            parsed = json.loads(response_text)
+                        except Exception as e:
+                            st.error(f"Failed parsing response JSON: {e}")
+                            parsed = []
                         st.session_state.llm_response = {"raw": response_text, "business_processes": parsed}
-                        st.success("LLM response received.")
+                        st.success("Received LLM response.")
                     except Exception as e:
-                        st.error(f"Error during LLM call or parsing response: {e}")
+                        st.error(f"LLM call error: {e}")
 
         with tabs[2]:
             if st.session_state.get("llm_response"):
-                st.subheader("Raw LLM Response")
-                st.text_area("LLM Output", value=st.session_state.llm_response.get("raw", ""), height=250)
+                st.subheader("Raw LLM Output")
+                st.text_area("LLM Text", value=st.session_state.llm_response.get("raw", ""), height=200)
                 st.subheader("Parsed Business Processes")
                 st.json(st.session_state.llm_response.get("business_processes", []))
             else:
-                st.info("Run the LLM in the previous tab.")
+                st.info("Run LLM query in previous step")
 
         with tabs[3]:
             bps = st.session_state.get("llm_response", {}).get("business_processes", [])
             if not bps:
-                st.info("Please generate business processes first.")
+                st.info("No business processes available. Run earlier steps.")
             else:
                 for i, bp in enumerate(bps):
-                    with st.expander(f"Process {i+1}"):
+                    with st.expander(f"Process {i + 1}"):
                         title = st.text_input(f"Title {i+1}", value=bp.get("title", ""), key=f"title_{i}")
                         desc = st.text_area(f"Description {i+1}", value=bp.get("description", ""), key=f"desc_{i}")
                         bp["title"] = title
@@ -267,48 +254,50 @@ def main_app():
         with tabs[4]:
             bps = st.session_state.get("llm_response", {}).get("business_processes", [])
             if not bps:
-                st.info("Add business processes to enable test cases.")
+                st.info("Define business processes first")
             else:
                 for i, bp in enumerate(bps):
-                    st.markdown(f"### Test Cases for: {bp.get('title', 'Untitled')}")
-                    scenarios = bp.get("test_scenarios", [])
-                    for idx, scenario in enumerate(scenarios):
-                        updated = st.text_area(f"Scenario {idx+1}", value=scenario, key=f"scenario_{i}_{idx}")
-                        scenarios[idx] = updated
-                    if st.button(f"Add Scenario to {bp.get('title', '')}", key=f"add_scenario_{i}"):
-                        scenarios.append("")
-                    bp["test_scenarios"] = scenarios
+                    st.markdown(f"### Test Scenarios for {bp.get('title', 'Untitled')}")
+                    ts = bp.get("test_scenarios", [])
+                    for idx, scenario in enumerate(ts):
+                        updated = st.text_area(f"Scenario {idx+1}", value=scenario, key=f"ts_{i}_{idx}")
+                        ts[idx] = updated
+                    if st.button(f"Add scenario to {bp.get('title', '')}", key=f"add_ts_{i}"):
+                        ts.append("")
+                    bp["test_scenarios"] = ts
                 st.session_state.llm_response["business_processes"] = bps
 
-                if st.button("Save Project"):
-                    data_to_save = {
+                if st.button("Save Project Data"):
+                    save_data = {
                         "prompts": {
-                            "user": combined_user_prompt,
-                            "system": fixed_system_prompt,
+                            "user": st.session_state.get("user_prompt", ""),
+                            "system": st.session_state.get("system_prompt", ""),
                         },
-                        "files": [f.name for f in st.session_state.uploaded_files],
+                        "files": [f.name for f in st.session_state.get("uploaded_files", [])],
                         "business_processes": bps,
                     }
                     try:
                         client = get_mongodb_client(mongo_uri)
                         db = client['enterprise']
                         col = db['projects']
-                        col.update_one({"_id": st.session_state.selected_project_id}, {"$set": data_to_save})
+                        col.update_one({"_id": st.session_state.selected_project_id}, {"$set": save_data})
                         client.close()
-                        st.success("Project saved successfully.")
+                        st.success("Project data saved!")
                     except Exception as e:
-                        st.error(f"Error saving project: {e}")
+                        st.error(f"Error saving project data: {e}")
+
 
 def main():
-    if 'logged_in' not in st.session_state:
+    if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
-    if 'username' not in st.session_state:
+    if "username" not in st.session_state:
         st.session_state.username = None
 
     if st.session_state.logged_in:
         main_app()
     else:
         login()
+
 
 if __name__ == "__main__":
     main()
