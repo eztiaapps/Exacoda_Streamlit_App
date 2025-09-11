@@ -665,7 +665,7 @@ def render_step1_upload(project, db_manager):
     )
     
     # Default prompts
-    default_user_prompt = """Analyze the provided functional specification document. Identify all distinct business processes described, including those outlined in functional requirements and use case specifications.
+    default_user_prompt = """Analyze the documents. Identify all distinct business processes described.
 
 For each business process, extract and structure the relevant details into a JSON object with the following fields:
 Here is an example: 
